@@ -207,7 +207,7 @@ class RuleEngine:
         try:
             tokens = self.tokenize(rule_string)
             expression = self.parse_expression(tokens)
-            rule = Rule(name=name)
+            rule = Rule(name=name, rule_string=rule_string)
             db.session.add(rule)
             db.session.flush()  # To get rule.id
 
@@ -230,13 +230,80 @@ class RuleEngine:
             db.session.rollback()
             logger.error(f"Exception when creating rule '{name}': {str(e)}")
             raise ValueError(f"Failed to create rule: {str(e)}")
-
-    def combine_rules(self, rule_strings, combined_rule_name="combined_rule", combine_operator="AND"):
+        
+    def combine_asts(self, ast_nodes, operator):
         """
-        Combines multiple rule strings into a single rule with an optimized AST.
+        Combines multiple AST nodes using the specified operator.
 
         Parameters:
-            - rule_strings (list of str): List of rule definitions as strings.
+            - ast_nodes (list of ASTNode): List of root AST nodes to combine.
+            - operator (str): 'AND' or 'OR'
+
+        Returns:
+            - combined_ast (ASTNode): The combined AST node.
+        """
+        if not ast_nodes:
+            return None
+        elif len(ast_nodes) == 1:
+            return ast_nodes[0]
+        else:
+            left = ast_nodes[0]
+            right = self.combine_asts(ast_nodes[1:], operator)
+            combined_node = ASTNode(
+                node_type="operator",
+                operator=operator,
+                # We will adjust left_node and right_node IDs when saving to the database
+                left_node=left,
+                right_node=right
+            )
+            return combined_node
+        
+    def save_combined_ast(self, node, rule_id):
+        """
+        Recursively saves the combined AST nodes to the database, updating rule_id and assigning new IDs.
+
+        Parameters:
+            - node (ASTNode): The AST node to save.
+            - rule_id (int): The ID of the new combined rule.
+
+        Returns:
+            - new_node (ASTNode): The saved AST node with updated IDs.
+        """
+        if node.node_type == "operator":
+            # Recursively save left and right nodes
+            new_left_node = self.save_combined_ast(node.left_node, rule_id)
+            new_right_node = self.save_combined_ast(node.right_node, rule_id)
+            new_node = ASTNode(
+                rule_id=rule_id,
+                node_type="operator",
+                operator=node.operator,
+                left_node=new_left_node.id,
+                right_node=new_right_node.id
+            )
+            db.session.add(new_node)
+            db.session.flush()
+            return new_node
+        else:
+            # For operand or constant nodes, create a new node with the same attributes
+            new_node = ASTNode(
+                rule_id=rule_id,
+                node_type=node.node_type,
+                attribute=node.attribute,
+                comparison=node.comparison,
+                value=node.value
+            )
+            db.session.add(new_node)
+            db.session.flush()
+            return new_node
+
+
+
+    def combine_rules(self, rule_ids, combined_rule_name="combined_rule", combine_operator="AND"):
+        """
+        Combines multiple existing rules into a single rule with an optimized AST.
+
+        Parameters:
+            - rule_ids (list of int): List of rule IDs to combine.
             - combined_rule_name (str): Name for the combined rule.
             - combine_operator (str): Operator to use when combining rules ('AND' or 'OR').
 
@@ -244,35 +311,42 @@ class RuleEngine:
             - combined_rule (Rule): The newly created combined rule.
         """
         try:
-            if not rule_strings:
-                raise ValueError("No rules provided for combination.")
-            if len(rule_strings) < 2:
-                raise ValueError("At least two rules are required to combine.")
+            if not rule_ids:
+                raise ValueError("No rule IDs provided for combination.")
+            if len(rule_ids) < 2:
+                raise ValueError("At least two rule IDs are required to combine.")
 
-            parsed_expressions = []
+            # Retrieve the root nodes and rule strings of the rules from the database
+            root_nodes = []
+            rule_strings = []
+            for rule_id in rule_ids:
+                rule = db.session.get(Rule, rule_id)
+                if not rule:
+                    raise ValueError(f"Rule with ID {rule_id} not found.")
+                root_node = rule.root_node
+                if not root_node:
+                    raise ValueError(f"Rule with ID {rule_id} does not have a root node.")
+                root_nodes.append(root_node)
+                # Ensure that rule_string is not None
+                if not rule.rule_string:
+                    raise ValueError(f"Rule with ID {rule_id} does not have a valid rule_string.")
+                rule_strings.append(f"({rule.rule_string})")
 
-            # Parse each rule string into expressions
-            for rule_str in rule_strings:
-                tokens = self.tokenize(rule_str)
-                expression = self.parse_expression(tokens)
-                parsed_expressions.append(expression)
+            # Combine the rule_strings using the specified operator
+            combined_rule_string = f" {combine_operator} ".join(rule_strings)
 
-            # Combine all expressions using the specified operator
-            combined_expression = self.combine_expressions(parsed_expressions, combine_operator)
+            # Combine the ASTs using the specified operator
+            combined_ast = self.combine_asts(root_nodes, combine_operator)
 
-            # Simplify the combined expression
-            simplified_expression = self.simplify_expression(combined_expression)
-
-            # Build and store the combined AST
-            combined_rule = Rule(name=combined_rule_name)
+            # Create a new Rule and save the combined AST
+            combined_rule = Rule(name=combined_rule_name, rule_string=combined_rule_string)
             db.session.add(combined_rule)
             db.session.flush()  # To get combined_rule.id
 
-            root_node = self.build_ast(simplified_expression, combined_rule.id)
-            if not root_node:
-                raise ValueError("Failed to build AST for the combined rule.")
+            # Save the combined AST nodes, updating rule_id to combined_rule.id
+            new_root_node = self.save_combined_ast(combined_ast, combined_rule.id)
 
-            combined_rule.root_node_id = root_node.id
+            combined_rule.root_node_id = new_root_node.id
 
             db.session.commit()
             logger.debug(f"Combined rule '{combined_rule_name}' created successfully with ID {combined_rule.id}")
@@ -281,6 +355,7 @@ class RuleEngine:
             db.session.rollback()
             logger.error(f"Failed to combine rules: {str(e)}")
             raise ValueError(f"Failed to combine rules: {str(e)}")
+
 
 
     def combine_expressions(self, expressions, operator):

@@ -6,6 +6,11 @@ from models import db, Rule, ASTNode, AttributeCatalog
 from rule_engine import RuleEngine
 from flask_cors import CORS  # To handle CORS for frontend
 import os
+from flask_migrate import Migrate
+
+
+
+
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS
@@ -16,6 +21,8 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # Initialize extensions
 db.init_app(app)
+
+migrate = Migrate(app, db)
 
 # Initialize RuleEngine
 rule_engine = RuleEngine()
@@ -69,14 +76,16 @@ def create_rule():
 def combine_rules():
     data = request.json
     rule_ids = data.get('rule_ids')
-    combined_rule_name = data.get('combined_rule_name', "combined_rule")
+    combined_rule_name = data.get('name', "combined_rule")
+    combine_operator = data.get('operator', 'AND').upper()
     if not rule_ids or not isinstance(rule_ids, list):
         return jsonify({"error": "'rule_ids' must be a list"}), 400
     try:
-        combined_rule = rule_engine.combine_rules(rule_ids, combined_rule_name)
+        combined_rule = rule_engine.combine_rules(rule_ids, combined_rule_name, combine_operator)
         return jsonify({"combined_rule_id": combined_rule.id, "name": combined_rule.name}), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 400
+
 
 
 @app.route('/evaluate_rule', methods=['POST'])
