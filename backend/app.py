@@ -75,16 +75,22 @@ def create_rule():
 @app.route('/combine_rules', methods=['POST'])
 def combine_rules():
     data = request.json
+    print("Received data:", data)
     rule_ids = data.get('rule_ids')
-    combined_rule_name = data.get('name', "combined_rule")
+    combined_rule_name = data.get('name') or data.get('combined_rule_name')
     combine_operator = data.get('operator', 'AND').upper()
     if not rule_ids or not isinstance(rule_ids, list):
         return jsonify({"error": "'rule_ids' must be a list"}), 400
+    if not combined_rule_name:
+        return jsonify({"error": "'name' is required for the combined rule"}), 400
     try:
         combined_rule = rule_engine.combine_rules(rule_ids, combined_rule_name, combine_operator)
         return jsonify({"combined_rule_id": combined_rule.id, "name": combined_rule.name}), 201
-    except Exception as e:
+    except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 
 
 

@@ -5,6 +5,8 @@
 The **Rule Engine Project** is a full-stack application designed to allow users to create, manage, and evaluate complex business rules based on various attributes. The backend is built with **Flask** and **SQLAlchemy**, interfacing with a **PostgreSQL** database, while the frontend is developed using **React**. The application ensures robust rule management with features like AST (Abstract Syntax Tree) generation, rule combination, and comprehensive testing using **Pytest**.
 
 ---
+![Project Demo](./assets/demo.gif)
+
 
 ## Features
 

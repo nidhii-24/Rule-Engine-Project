@@ -252,11 +252,11 @@ class RuleEngine:
             combined_node = ASTNode(
                 node_type="operator",
                 operator=operator,
-                # We will adjust left_node and right_node IDs when saving to the database
-                left_node=left,
-                right_node=right
+                left=left,
+                right=right
             )
             return combined_node
+
         
     def save_combined_ast(self, node, rule_id):
         """
@@ -271,8 +271,8 @@ class RuleEngine:
         """
         if node.node_type == "operator":
             # Recursively save left and right nodes
-            new_left_node = self.save_combined_ast(node.left_node, rule_id)
-            new_right_node = self.save_combined_ast(node.right_node, rule_id)
+            new_left_node = self.save_combined_ast(node.left, rule_id)
+            new_right_node = self.save_combined_ast(node.right, rule_id)
             new_node = ASTNode(
                 rule_id=rule_id,
                 node_type="operator",
@@ -295,6 +295,7 @@ class RuleEngine:
             db.session.add(new_node)
             db.session.flush()
             return new_node
+
 
 
 
@@ -351,6 +352,22 @@ class RuleEngine:
             db.session.commit()
             logger.debug(f"Combined rule '{combined_rule_name}' created successfully with ID {combined_rule.id}")
             return combined_rule
+        except IntegrityError as e:
+            db.session.rollback()
+            if 'unique constraint' in str(e.orig):
+                # Generate a unique name
+                unique_name = f"{combined_rule_name}_{uuid.uuid4().hex[:8]}"
+                combined_rule = Rule(name=unique_name, rule_string=combined_rule_string)
+                db.session.add(combined_rule)
+                db.session.flush()
+                new_root_node = self.save_combined_ast(combined_ast, combined_rule.id)
+                combined_rule.root_node_id = new_root_node.id
+                db.session.commit()
+                logger.debug(f"Combined rule '{unique_name}' created successfully with ID {combined_rule.id}")
+                return combined_rule
+            else:
+                logger.error(f"Failed to combine rules: {str(e)}")
+                raise ValueError(f"Failed to combine rules: {str(e)}")
         except Exception as e:
             db.session.rollback()
             logger.error(f"Failed to combine rules: {str(e)}")
